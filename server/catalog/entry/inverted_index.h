@@ -232,7 +232,8 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
   void OnDrop() final;
 
-  void SyncReindexJob(duckdb::CatalogTransaction transaction);
+  void CreateReindexJob(duckdb::CatalogTransaction transaction,
+                        uint32_t interval_ms);
 
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,
@@ -257,6 +258,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
 
  private:
   persistence::InvertedIndexData ToPersisted() const;
+
+  void AlterReindexJob(duckdb::CatalogTransaction transaction,
+                       uint32_t interval_ms);
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<search::SearchTable> _search_table;
