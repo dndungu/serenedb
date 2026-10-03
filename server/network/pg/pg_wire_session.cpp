@@ -28,6 +28,7 @@
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -192,6 +193,14 @@ inline duckdb::idx_t ResolveCopyTableId(ConnectionContext& conn,
 inline void StagePendingCopyProgress(connector::SereneDBClientState& state,
                                      ConnectionContext& conn,
                                      duckdb::SQLStatement& statement) {
+  if (statement.type == duckdb::StatementType::CREATE_STATEMENT) {
+    const auto& info = *statement.Cast<duckdb::CreateStatement>().info;
+    if (info.type == duckdb::CatalogType::TABLE_ENTRY &&
+        info.Cast<duckdb::CreateTableInfo>().query) {
+      state.pending_copy_command = sdb::pg::ProgressCommand::CreateTableAs;
+    }
+    return;
+  }
   if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
     return;
   }
@@ -430,6 +439,11 @@ bool PgWireSession<Kind>::SetupConnection() {
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {
         if (command == sdb::pg::ProgressCommand::CopyTo) {
           SDB_WAIT_ON_FAILURE("pause_copy_to_mid_stream");
+        }
+      }
+      SDB_IF_FAILURE("pause_ctas_mid_ingest") {
+        if (command == sdb::pg::ProgressCommand::CreateTableAs) {
+          SDB_WAIT_ON_FAILURE("pause_ctas_mid_ingest");
         }
       }
     };
@@ -1403,7 +1417,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     // DataRow (a plan error then lands after T, which is postgres's
     // mid-stream error behavior).
     const auto stmt_type = statement->type;
-    const auto tag = sdb::pg::BuildCommandTag(*statement, *_conn->context);
+    const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
+                       ? sdb::pg::CommandTag{"ROLLBACK", stmt_type}
+                       : sdb::pg::BuildCommandTag(*statement, *_conn->context);
     auto wire = MakeWireContext({});
     wire->announce_rowdesc = true;
     ClosingPending pending;
@@ -2390,9 +2406,20 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
     if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
       // DDL/DML/SET: materialize, write the command tag (affected-row count),
       // done in this Execute -- these never page.
+      const bool commit_rolls_back = _txn_state->StatusByte() == 'E' &&
+                                     portal.stmt->Unbound() &&
+                                     IsCommit(*portal.stmt->Unbound());
       auto result = co_await DriveToResult(
         prepared, portal.bind_info.param_values, exec.pending, nullptr);
-      WriteCommandTag(prepared, *result, return_type);
+      if (commit_rolls_back) {
+        WriteCommandComplete(
+          this->_send,
+          sdb::pg::CommandTag{"ROLLBACK",
+                              duckdb::StatementType::TRANSACTION_STATEMENT},
+          0);
+      } else {
+        WriteCommandTag(prepared, *result, return_type);
+      }
       exec.state = PortalState::Exhausted;
       if (prepared.GetStatementType() ==
           duckdb::StatementType::TRANSACTION_STATEMENT) {

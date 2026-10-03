@@ -4,25 +4,17 @@ control substitution on
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA add_parquet_key('key128', '0123456789112345');
-----
-Success
 
-query
+statement ok
 PRAGMA add_parquet_key('key192', '012345678911234501234567');
-----
-Success
 
-query
+statement ok
 PRAGMA add_parquet_key('key256', '01234567891123450123456789112345');
-----
-Success
 
-query
+statement ok
 PRAGMA add_parquet_key('key256base64', 'MDEyMzQ1Njc4OTExMjM0NTAxMjM0NTY3ODkxMTIzNDU=');
-----
-Success
 
 # DOCS_TEST: example_002
 

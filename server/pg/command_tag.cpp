@@ -30,12 +30,17 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
+#include <duckdb/parser/statement/pragma_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+#include <utility>
+
+#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -60,6 +65,8 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "CREATE DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "CREATE TRIGGER";
     default:
       return "CREATE";
   }
@@ -85,6 +92,10 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "DROP DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "DROP TRIGGER";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "DROP TEXT SEARCH DICTIONARY";
     default:
       return "DROP";
   }
@@ -142,6 +153,38 @@ CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
 }  // namespace
 namespace {
 
+std::string_view PragmaTag(std::string_view name) {
+  static constexpr std::pair<std::string_view, std::string_view> kTags[] = {
+    {"create_foreign_server", "CREATE SERVER"},
+    {"drop_foreign_server", "DROP SERVER"},
+    {"create_text_search_dictionary", "CREATE TEXT SEARCH DICTIONARY"},
+    {"create_publication", "CREATE PUBLICATION"},
+    {"create_subscription", "CREATE SUBSCRIPTION"},
+    {"serenedb_create_role", "CREATE ROLE"},
+    {"serenedb_drop_role", "DROP ROLE"},
+    {"serenedb_drop_database", "DROP DATABASE"},
+    {"serenedb_create_policy", "CREATE POLICY"},
+    {"serenedb_alter_policy", "ALTER POLICY"},
+    {"serenedb_drop_policy", "DROP POLICY"},
+    {"serenedb_alter_table_row_security", "ALTER TABLE"},
+    {"serenedb_reindex", "REINDEX"},
+    {"serenedb_vacuum", "VACUUM"},
+  };
+  for (const auto& [pragma, tag] : kTags) {
+    if (pragma == name) {
+      return tag;
+    }
+  }
+  return "PRAGMA";
+}
+
+bool CreatesSereneDBDatabase(const duckdb::SQLStatement& statement) {
+  const auto& info = *statement.Cast<duckdb::AttachStatement>().info;
+  const auto type = info.options.find("type");
+  return type != info.options.end() &&
+         type->second.ToString() == catalog::SereneDBCatalog::kStorageType;
+}
+
 CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
                                const duckdb::SQLStatement* unbound,
                                duckdb::ClientContext* context) {
@@ -176,7 +219,16 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
+      if (unbound && CreatesSereneDBDatabase(*unbound)) {
+        return make("CREATE DATABASE");
+      }
       return make("ATTACH");
+    case StatementType::PRAGMA_STATEMENT:
+      if (unbound) {
+        return make(PragmaTag(unbound->Cast<duckdb::PragmaStatement>()
+                                .info->name.GetIdentifierName()));
+      }
+      return make("PRAGMA");
     case StatementType::DETACH_STATEMENT:
       return make("DETACH");
     case StatementType::SET_STATEMENT:

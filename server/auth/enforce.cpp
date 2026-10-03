@@ -36,6 +36,7 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
@@ -464,19 +465,59 @@ class Enforcer {
         }
         break;
       }
-      case LogicalOperatorType::LOGICAL_ATTACH:
+      case LogicalOperatorType::LOGICAL_ATTACH: {
         if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                           ERR_MSG("permission denied to create database"));
         }
-        break;
-      case LogicalOperatorType::LOGICAL_DETACH:
-        if (_enforce) {
-          RequireDatabaseOwner(op.Cast<duckdb::LogicalSimple>()
-                                 .info->Cast<duckdb::DetachInfo>()
-                                 .name.GetIdentifierName());
+        const auto& info =
+          op.Cast<duckdb::LogicalSimple>().info->Cast<duckdb::AttachInfo>();
+        auto db = duckdb::DatabaseManager::Get(_context).GetDatabase(info.name);
+        if (info.on_conflict != duckdb::OnCreateConflict::IGNORE_ON_CONFLICT ||
+            !db ||
+            db->GetCatalog().GetCatalogType() !=
+              catalog::SereneDBCatalog::kStorageType) {
+          break;
+        }
+        auto& cluster = catalog::ClusterOf(_context);
+        const auto lookup =
+          cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+            .GetEntryDetailed(cluster.GetCatalogTransaction(_context),
+                              info.name);
+        if (lookup.reason ==
+            duckdb::CatalogSet::EntryLookup::FailureReason::DELETED) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+                          ERR_MSG("database \"", info.name.GetIdentifierName(),
+                                  "\" is dropped by this transaction; commit "
+                                  "the drop before creating it again"));
+        }
+        if (!lookup.result) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+            ERR_MSG("database \"", info.name.GetIdentifierName(),
+                    "\" is being created by another transaction"));
         }
         break;
+      }
+      case LogicalOperatorType::LOGICAL_DETACH: {
+        const auto& name = op.Cast<duckdb::LogicalSimple>()
+                             .info->Cast<duckdb::DetachInfo>()
+                             .name;
+        auto db = duckdb::DatabaseManager::Get(_context).GetDatabase(name);
+        if (db && db->GetCatalog().GetCatalogType() ==
+                    catalog::SereneDBCatalog::kStorageType) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("cannot detach database \"", name.GetIdentifierName(),
+                    "\""),
+            ERR_HINT("A database made by CREATE DATABASE is removed with "
+                     "DROP DATABASE."));
+        }
+        if (_enforce) {
+          RequireDatabaseOwner(name.GetIdentifierName());
+        }
+        break;
+      }
       case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
         if (_enforce &&
             op.Cast<duckdb::LogicalCopyToFile>().file_path != "/dev/stdout") {

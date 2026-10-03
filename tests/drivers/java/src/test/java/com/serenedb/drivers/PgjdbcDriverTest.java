@@ -107,6 +107,36 @@ class PgjdbcDriverTest {
         assertNotEquals("", ps.get("server_version"));
     }
 
+    @Test
+    @DisplayName("executeUpdate: DDL run as pragmas returns no result set")
+    void executeUpdateDdl() throws Exception {
+        String role = "papich_" + ProcessHandle.current().pid();
+        String database = "melstroi_" + ProcessHandle.current().pid();
+        for (Connection conn : List.of(extendedTextConn, simpleConn)) {
+            try (Statement st = conn.createStatement()) {
+                assertEquals(0, st.executeUpdate("CREATE ROLE " + role));
+                assertEquals(0, st.executeUpdate("DROP ROLE " + role));
+                assertEquals(0, st.executeUpdate("CREATE DATABASE " + database));
+                assertEquals(0, st.executeUpdate("DROP DATABASE " + database));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("commit: a block that hit an error reports the rollback")
+    void commitOfAbortedBlockThrows() throws Exception {
+        for (Connection conn : List.of(extendedTextConn, simpleConn)) {
+            conn.setAutoCommit(false);
+            try (Statement st = conn.createStatement()) {
+                assertThrows(java.sql.SQLException.class, () -> st.executeQuery("SELECT * FROM papich_missing_table"));
+                assertThrows(java.sql.SQLException.class, conn::commit);
+            } finally {
+                conn.rollback();
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     // ---- round-trip matrix ----------------------------------------------
 
     static Stream<SpecLoader.Case> cases() throws Exception {

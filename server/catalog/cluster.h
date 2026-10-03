@@ -99,11 +99,13 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::CatalogTransaction LoginTransaction() {
     return duckdb::CatalogTransaction{
       GetDatabase(), duckdb::TRANSACTION_ID_START - 1,
-      duckdb::DuckTransactionManager::Get(GetAttached()).GetLastCommit() + 1};
+      duckdb::DuckTransactionManager::Get(GetAttached())
+        .DurableSnapshotStart()};
   }
 
-  uint64_t CatalogGeneration() const {
-    return _catalog_generation.load(std::memory_order_acquire);
+  uint64_t CatalogGeneration() {
+    return duckdb::DuckTransactionManager::Get(GetAttached())
+      .GetLastCommittedCatalogVersion();
   }
   std::shared_ptr<const auth::RoleGraph> CachedRoles(uint64_t generation) {
     std::lock_guard guard{_roles_mutex};
@@ -171,8 +173,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   std::atomic_size_t _commits_in_flight{0};
-  std::atomic_uint64_t _catalog_generation{1};
-  std::atomic<duckdb::idx_t> _generation_version{0};
   std::mutex _roles_mutex;
   uint64_t _roles_generation = 0;
   std::shared_ptr<const auth::RoleGraph> _roles;
@@ -180,7 +180,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                                std::shared_ptr<const auth::RoleClosure>>
     _closures;
   bool _compactable = false;
-  duckdb::idx_t _live_bytes = 0;
+  std::atomic<duckdb::idx_t> _live_bytes{0};
   std::mutex _artifacts_mutex;
   std::vector<Artifact> _artifacts;
   std::unordered_set<duckdb::idx_t> _replayed_drops;

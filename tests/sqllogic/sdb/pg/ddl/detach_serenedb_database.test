@@ -1,0 +1,54 @@
+statement ok
+DROP DATABASE IF EXISTS vjling_stream;
+
+
+statement ok
+CREATE DATABASE vjling_stream;
+
+
+statement ok
+CREATE TABLE vjling_stream.public.donate (x INT);
+
+
+statement ok
+INSERT INTO vjling_stream.public.donate VALUES (1);
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DETACH vjling_stream;
+----
+db error: ERROR: cannot detach database "vjling_stream"
+HINT: A database made by CREATE DATABASE is removed with DROP DATABASE.
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM vjling_stream.public.donate;
+----
+n
+1
+
+
+statement error
+DETACH IF EXISTS vjling_stream;
+----
+db error: ERROR: cannot detach database "vjling_stream"
+HINT: A database made by CREATE DATABASE is removed with DROP DATABASE.
+
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'vjling_stream';
+----
+n
+1
+
+
+statement ok
+DROP DATABASE vjling_stream;

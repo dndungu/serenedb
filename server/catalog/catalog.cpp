@@ -418,29 +418,19 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   MountSystemSchemas(*this);
 }
 
-void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+void SereneDBCatalog::MarkDetached() {
   _detached.store(true, std::memory_order_release);
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(
       [&](duckdb::CatalogEntry& entry) { servers.emplace_back(entry.name); });
   for (const auto& server : servers) {
-    duckdb::DatabaseManager::Get(context).DetachDatabase(
-      context, server, duckdb::OnEntryNotFound::RETURN_NULL);
+    duckdb::DatabaseManager::Get(GetDatabase()).DetachInternal(server);
   }
-  if (context.transaction.HasActiveTransaction()) {
-    auto& cluster = ClusterOf(context);
-    const auto transaction = cluster.GetCatalogTransaction(context);
-    auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                   .GetEntry(transaction, GetName());
-    if (entry && entry->oid == GetAttached().oid) {
-      duckdb::DropInfo info;
-      info.type = duckdb::CatalogType::DATABASE_ENTRY;
-      info.SetName(GetName());
-      info.if_not_found = duckdb::OnEntryNotFound::RETURN_NULL;
-      cluster.DropDatabase(transaction, info);
-    }
-  }
+}
+
+void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
+  MarkDetached();
   duckdb::DuckCatalog::OnDetach(context);
 }
 

@@ -312,6 +312,12 @@ struct Portal {
 
 // COMMIT/ROLLBACK are the only commands PG still accepts while a transaction
 // block is aborted -- they end the block. Everything else is rejected.
+inline bool IsCommit(const duckdb::SQLStatement& statement) {
+  return statement.type == duckdb::StatementType::TRANSACTION_STATEMENT &&
+         statement.Cast<duckdb::TransactionStatement>().info->type ==
+           duckdb::TransactionType::COMMIT;
+}
+
 inline bool IsTransactionExit(const duckdb::SQLStatement& statement) {
   if (statement.type != duckdb::StatementType::TRANSACTION_STATEMENT) {
     return false;

@@ -310,6 +310,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterForeignServerPragma(db);
 
+  connector::RegisterDropDatabasePragma(db);
+
   connector::RegisterPgMathFunctions(db);
 
   connector::RegisterKeyEncodingFunctions(db);

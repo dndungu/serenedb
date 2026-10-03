@@ -74,6 +74,8 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   void Initialize(bool load_builtin) final;
 
   void OnDetach(duckdb::ClientContext& context) final;
+  void MarkDetached();
+  bool IsDetached() const { return _detached.load(std::memory_order_acquire); }
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;

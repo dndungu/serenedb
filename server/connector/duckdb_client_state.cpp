@@ -32,6 +32,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <duckdb/transaction/local_storage.hpp>
@@ -219,6 +220,21 @@ void SereneDBClientState::TransactionPreCommit(
   // so catalog lookups performed by custom-impl settings (e.g. search_path)
   // can succeed via their normal set_local path.
   _connection_ctx->PreCommit();
+  for (auto& db : transaction.OpenedTransactions()) {
+    auto& catalog = db.get().GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType ||
+        !catalog.Cast<catalog::SereneDBCatalog>().IsDetached()) {
+      continue;
+    }
+    auto opened = transaction.TryGetTransaction(db);
+    if (opened && opened->IsDuckTransaction() &&
+        opened->Cast<duckdb::DuckTransaction>().ChangesMade()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
+        ERR_MSG("database \"", db.get().GetName().GetIdentifierName(),
+                "\" was dropped by another transaction"));
+    }
+  }
   if (InvertedStoreIndex::AnyBound()) {
     for (auto& db : transaction.OpenedTransactions()) {
       if (db.get().GetCatalog().GetCatalogType() !=
@@ -250,6 +266,11 @@ void SereneDBClientState::TransactionPreCommit(
   tls_committing_ctx = _connection_ctx.get();
 }
 
+void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
+                                                 duckdb::ClientContext&) {
+  _connection_ctx->RefreshBeforeWalWrite(db.oid);
+}
+
 void SereneDBClientState::TransactionPreCheckpoint(
   duckdb::AttachedDatabase& db, duckdb::ClientContext&,
   duckdb::idx_t wal_generation, duckdb::idx_t wal_end_offset) {
@@ -260,12 +281,10 @@ void SereneDBClientState::TransactionPreCheckpoint(
   // This commit's exact WAL position, captured under the WAL lock by the
   // engine: with overlapping commits, reading the WAL size here would include
   // later transactions' bytes and over-claim the recovery cursor (skipping
-  // their re-stream after a crash). A commit whose changes are carried by its
-  // in-commit checkpoint (wal_end_offset == 0) recovers from the start of the
-  // post-checkpoint WAL generation.
-  const auto cursor = wal_end_offset > 0
-                        ? search::WalCursor{wal_generation, wal_end_offset}
-                        : search::WalCursor{wal_generation + 1, 0};
+  // their re-stream after a crash).
+  const auto cursor = search::WalCursor{
+    wal_generation,
+    wal_end_offset > 0 ? wal_end_offset : db.GetStorageManager().GetWALSize()};
   _connection_ctx->CommitSearch(cursor, db.oid);
 }
 
@@ -304,6 +323,9 @@ void SereneDBClientState::QueryBegin(duckdb::ClientContext& context) {
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = progress_source->metrics;
     metrics.SetCommand(pending_copy_command);
+    if (pending_copy_command == pg::ProgressCommand::CreateTableAs) {
+      metrics.SetPhase(pg::progress_phase::CreateTableAs::Ingesting);
+    }
     metrics.SetIoType(pending_copy_io);
     pg::ProgressMetrics::Set(metrics.relid,
                              static_cast<int64_t>(pending_copy_relid));

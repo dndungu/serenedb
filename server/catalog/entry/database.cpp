@@ -21,9 +21,12 @@
 #include "catalog/entry/database.h"
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <utility>
 
 #include "catalog/boot.h"
+#include "catalog/catalog.h"
 
 namespace sdb::catalog {
 
@@ -56,6 +59,20 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::Copy(
 DatabaseCatalogEntry::~DatabaseCatalogEntry() {
   if (_dropped) {
     RemoveDatabaseFiles(catalog.GetAttached(), oid);
+  }
+}
+
+void DatabaseCatalogEntry::OnDrop() {
+  _dropped = true;
+  auto& manager = duckdb::DatabaseManager::Get(catalog.GetDatabase());
+  auto attached = manager.GetDatabase(name);
+  if (!attached || attached->oid != oid) {
+    return;
+  }
+  manager.DetachInternal(name);
+  auto& detached = attached->GetCatalog();
+  if (detached.GetCatalogType() == SereneDBCatalog::kStorageType) {
+    detached.Cast<SereneDBCatalog>().MarkDetached();
   }
 }
 

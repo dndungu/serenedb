@@ -105,6 +105,19 @@ WalCursor InvertedIndexStorage::CursorAtOrBelow(Tick tick) noexcept {
   return cursor;
 }
 
+Tick InvertedIndexStorage::FlushBound(uint64_t generation,
+                                      Tick unbounded) noexcept {
+  duckdb::lock_guard<duckdb::mutex> lock{_flush_cursors_mutex};
+  Tick last = _last_durable_tick;
+  for (const auto& [tick, cursor] : _flush_cursors) {
+    if (cursor.generation > generation) {
+      return last;
+    }
+    last = std::max(last, tick);
+  }
+  return unbounded;
+}
+
 std::filesystem::path InvertedIndexStorage::GetPath(duckdb::idx_t db_id,
                                                     duckdb::idx_t schema_id,
                                                     duckdb::idx_t table_id,
@@ -216,14 +229,12 @@ InvertedIndexStorage::InvertedIndexStorage(
     // Durable WAL cursor, stamped consistently with the durable tick we just
     // persisted above. `tick` here is the exact tick this flush made durable
     // (FlushContext::FlushPending's flushed_tick in the Recovering/Creating
-    // phase, before_refresh in the Active phase -- both are the highest tick
+    // phase, the refresh tick in the Active phase -- both are the highest tick
     // covered by these segments), and _last_durable_tick is its running max.
     // The matching cursor is the highest per-index commit entry at/below that
     // tick. A 0/absent lookup means no recorded commit fell at/below it, so
-    // keep the prior durable cursor rather than regressing it to 0. Checkpoint
-    // refreshes set _pending_wal_cursor up front (next generation, offset 0)
-    // and disable this stamping. Recovery replays only operations at or past
-    // the stamped cursor.
+    // keep the prior durable cursor rather than regressing it to 0. Recovery
+    // replays only operations at or past the stamped cursor.
     if (_stamp_cursor_from_flush) {
       if (const auto cursor = CursorAtOrBelow(_last_durable_tick);
           cursor.generation != 0 || cursor.offset != 0) {
@@ -273,6 +284,7 @@ InvertedIndexStorage::InvertedIndexStorage(
 
   if (reopen) {
     _last_durable_tick = _recovery_tick;
+    _pending_wal_cursor = _recovery_wal_cursor;
     SetFileManifest(file_manifest);
   }
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
@@ -377,12 +389,6 @@ void InvertedIndexStorage::Refresh(
   std::ignore = RefreshUnsafe(/*wait=*/true, progress, code);
 }
 
-void InvertedIndexStorage::CheckpointRefresh() {
-  RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, nullptr, code,
-                              /*for_checkpoint=*/true);
-}
-
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
@@ -431,10 +437,9 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
 }
 
 ResultWithTime InvertedIndexStorage::RefreshUnsafe(
-  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
-  bool for_checkpoint) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   auto begin = std::chrono::steady_clock::now();
-  auto result = RefreshUnsafeImpl(wait, progress, code, for_checkpoint);
+  auto result = RefreshUnsafeImpl(wait, progress, code);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -483,8 +488,7 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
 }
 
 absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
-  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code,
-  bool for_checkpoint) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   code = RefreshResult::NoChanges;
 
   try {
@@ -524,27 +528,19 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
     // performs that CursorAtOrBelow(_last_durable_tick) lookup just before
     // persisting (it has the exact durable tick in hand), gated by
     // _stamp_cursor_from_flush.
-    //
-    // A checkpoint-driven refresh runs the moment before the checkpoint
-    // truncates the store WAL and bumps the iteration to
-    // GetCheckpointIteration()
-    // + 1. The post-checkpoint WAL starts fresh, so stamp that next generation
-    // with offset 0: the next boot loads iteration+1 and the cursor generation
-    // matches (the live iteration is still N here, but the persisted header
-    // will be N+1). The payload provider must NOT overwrite that, so disable
-    // the flush-driven stamping.
-    _stamp_cursor_from_flush = !for_checkpoint;
+    _stamp_cursor_from_flush = true;
     absl::Cleanup stamp_guard = [&]() noexcept {
       _stamp_cursor_from_flush = false;
     };
-    if (for_checkpoint) {
-      if (auto store = AttachedDatabaseById(_db_id)) {
-        const auto next_gen = store->GetStorageManager()
-                                .GetBlockManager()
-                                .GetCheckpointIteration() +
-                              1;
-        _pending_wal_cursor = WalCursor{next_gen, 0};
-      }
+    auto durable_bound = before_refresh;
+    if (auto store = AttachedDatabaseById(_db_id)) {
+      durable_bound = FlushBound(
+        store->GetStorageManager().GetBlockManager().GetCheckpointIteration(),
+        before_refresh);
+    }
+    if (_phase == Phase::Active && durable_bound < before_refresh &&
+        durable_bound <= _last_durable_tick) {
+      return absl::OkStatus();
     }
     absl::Cleanup refresh_guard = [&, last = _last_durable_tick]() noexcept {
       _last_durable_tick = last;
@@ -556,7 +552,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
         case Phase::Recovering:
           return irs::writer_limits::kMaxTick;
         case Phase::Active:
-          return before_refresh;
+          return durable_bound;
       }
     }();
     const bool were_changes = _writer->RefreshCommit({
@@ -572,13 +568,13 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
       SDB_TRACE(SEARCH, "Refresh for Search index '", GetId(),
                 "' is no changes, tick ", before_refresh, "'");
       if (_phase != Phase::Recovering) {
-        _last_durable_tick = before_refresh;
+        _last_durable_tick = durable_bound;
       }
       StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
         std::move(reader), GetFileManifest()));
       return absl::OkStatus();
     }
-    SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == before_refresh);
+    SDB_ASSERT(_phase != Phase::Active || _last_durable_tick == durable_bound);
     code = RefreshResult::Done;
 
     // update reader

@@ -93,6 +93,13 @@ class Transaction : public Config {
 
   void Rollback();
 
+  void RefreshBeforeWalWrite(
+    duckdb::idx_t database,
+    std::shared_ptr<search::InvertedIndexStorage> storage) {
+    _refresh_before_wal_write.emplace_back(database, std::move(storage));
+  }
+  void RefreshBeforeWalWrite(duckdb::idx_t database);
+
   void DeferToCommit(absl::AnyInvocable<void()> action) {
     _on_commit.push_back(std::move(action));
   }
@@ -166,28 +173,15 @@ class Transaction : public Config {
     return it->second.slots;
   }
 
-  void RegisterSearchFlush() noexcept {
-    for (auto& [index_id, entry] : _search_transactions) {
-      for (auto& slot : entry.slots) {
-        if (slot.transaction) {
-          slot.transaction->RegisterFlush();
-        }
+  void RegisterSearchFlush(duckdb::idx_t index_id) noexcept {
+    for (auto& slot : IndexSlots(index_id)) {
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
       }
     }
   }
 
-  const duckdb::Vector& FeedColumn(const void* table, duckdb::row_t first_row,
-                                   duckdb::idx_t count, duckdb::idx_t column,
-                                   const duckdb::Vector& source);
-
  private:
-  struct FeedColumns {
-    const void* table = nullptr;
-    duckdb::row_t first_row = 0;
-    duckdb::idx_t count = 0;
-    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
-  };
-
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
@@ -202,12 +196,14 @@ class Transaction : public Config {
     _search_transactions;
   irs::containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
-  FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
+  std::vector<
+    std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
+    _refresh_before_wal_write;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

@@ -38,6 +38,8 @@ Use `IF NOT EXISTS` to attach only when the alias is not already in use, or `OR 
 
 The `DETACH` statement closes a previously attached database and releases any locks held on it.
 
+`DETACH` applies to attached database files. A database made by [`CREATE DATABASE`](../create_database/index.md) cannot be detached; remove it with `DROP DATABASE` instead.
+
 ### `DETACH` Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />

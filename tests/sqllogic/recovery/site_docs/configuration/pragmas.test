@@ -300,37 +300,29 @@ DETACH db171;
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_progress_bar;
-----
-Success
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_print_progress_bar;
-----
-Success
 
 # DOCS_TEST: example_026
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_progress_bar;
-----
-Success
 
 # DOCS_TEST: example_027
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_print_progress_bar;
-----
-Success
 
 # DOCS_TEST: example_028
 
@@ -357,15 +349,11 @@ SET explain_output = 'all';
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_profiling;
-----
-Success
 
-query
+statement ok
 PRAGMA enable_profile;
-----
-Success
 
 # DOCS_TEST: example_032
 
@@ -423,33 +411,25 @@ SET profile_output = '/path/to/file.json';
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_profiling;
-----
-Success
 
-query
+statement ok
 PRAGMA disable_profile;
-----
-Success
 
 # DOCS_TEST: example_044
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_optimizer;
-----
-Success
 
 # DOCS_TEST: example_045
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_optimizer;
-----
-Success
 
 # DOCS_TEST: example_046
 
@@ -486,19 +466,15 @@ SET log_query_path = '';
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_object_cache;
-----
-Success
 
 # DOCS_TEST: example_055
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_object_cache;
-----
-Success
 
 # DOCS_TEST: example_056
 
@@ -520,28 +496,22 @@ PRAGMA disabled_compression_methods = 'fsst,rle';
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA force_checkpoint;
-----
-Success
 
 # DOCS_TEST: example_059
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_checkpoint_on_shutdown;
-----
-Success
 
 # DOCS_TEST: example_060
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_checkpoint_on_shutdown;
-----
-Success
 
 # DOCS_TEST: example_061
 
@@ -579,37 +549,29 @@ SET ieee_floating_point_ops = false;
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA enable_verification;
-----
-Success
 
 # DOCS_TEST: example_066
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_verification;
-----
-Success
 
 # DOCS_TEST: example_067
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA verify_parallelism;
-----
-Success
 
 # DOCS_TEST: example_068
 
 # DOCS_TEST_BODY
 
-query
+statement ok
 PRAGMA disable_verify_parallelism;
-----
-Success
 
 # DOCS_TEST: example_069
 

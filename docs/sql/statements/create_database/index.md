@@ -43,6 +43,18 @@ As an alternative to reconnecting, switch to the new database within the current
 
 The options are stored with the database, so the server opens it with them again after a restart. `BLOCK_SIZE` is fixed once the file exists; `ROW_GROUP_SIZE` applies to the row groups written from then on. Any other option is refused.
 
+## Dropping a database
+
+`DROP DATABASE [IF EXISTS] name` removes a database together with its tables, indexes and files. It is transactional: inside a transaction the database stays usable for other sessions until the transaction commits, and a `ROLLBACK` keeps it. Its files are deleted only once the drop commits.
+
+<SqlLogicTest id="sql/statements/create_database/index/example_005" />
+
+Only the owner of a database, or a role that is a member of the owner, can drop it. The database a session is connected to, or has switched to with `USE`, cannot be dropped from that session:
+
+<SqlLogicTest id="sql/statements/create_database/index/example_006" />
+
+A database dropped in a transaction cannot be created again under the same name in that transaction; commit the drop first.
+
 ## See also
 
 - [ATTACH / DETACH](../attach/index.md) — attach an existing database file

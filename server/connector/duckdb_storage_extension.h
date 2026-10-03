@@ -37,4 +37,6 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config,
 // Register SereneDB optimizer extensions with a live DuckDB instance.
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db);
 
+void RegisterDropDatabasePragma(duckdb::DatabaseInstance& db);
+
 }  // namespace sdb::connector

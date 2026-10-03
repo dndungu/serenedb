@@ -182,18 +182,12 @@ class InvertedIndexStorage final
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
-                               RefreshResult& code,
-                               bool for_checkpoint = false);
+                               RefreshResult& code);
 
   ResultWithTime CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void Refresh(const irs::ProgressReportCallback& progress = nullptr);
-  // Refresh driven by the checkpoint barrier: the store WAL is about to be
-  // truncated and its iteration bumped, so the stamped durable cursor must
-  // carry the NEXT generation (offset 0), not the live one (see
-  // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
-  void CheckpointRefresh();
 
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
@@ -294,6 +288,7 @@ class InvertedIndexStorage final
   // entries strictly below the returned one for THIS index (they can never be
   // selected again here), which is safe because the table is per-index.
   WalCursor CursorAtOrBelow(Tick tick) noexcept;
+  Tick FlushBound(uint64_t generation, Tick unbounded) noexcept;
 
   // The index lost a committed transaction's rows (an iresearch tick commit
   // failed after the store transaction was already durable). The storage keeps
@@ -327,7 +322,7 @@ class InvertedIndexStorage final
     -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
-                                 RefreshResult& code, bool for_checkpoint);
+                                 RefreshResult& code);
   absl::Status CleanupUnsafeImpl();
 
   duckdb::idx_t _index_id;
@@ -361,9 +356,7 @@ class InvertedIndexStorage final
   WalCursor _recovery_wal_cursor;
   // When true, the meta payload provider stamps _pending_wal_cursor from
   // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
-  // that same call. When false (checkpoint refresh), _pending_wal_cursor was
-  // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
-  // as-is.
+  // that same call.
   bool _stamp_cursor_from_flush{false};
   // Per-index commit-tick -> store-WAL cursor table. Recorded by
   // CommitSearch/FinishReplay before a batch becomes flushable; consumed by

@@ -37,6 +37,7 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -68,9 +69,8 @@ void SyncDirectory(const std::string& directory) {
     ::close(fd);
   }
   if (!synced) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not fsync directory \"", directory,
-                            "\": ", std::strerror(error)));
+    SDB_FATAL(GENERAL, "could not fsync directory \"", directory,
+              "\": ", std::strerror(error));
   }
 }
 
@@ -78,6 +78,12 @@ void SyncDirectory(const std::string& directory) {
 
 duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
   duckdb::ClientContext& context, duckdb::idx_t catalog_oid) {
+  for (const auto& db : duckdb::DatabaseManager::Get(context).GetDatabases()) {
+    if (db->oid == catalog_oid &&
+        db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType) {
+      return db->GetCatalog();
+    }
+  }
   duckdb::optional_ptr<duckdb::CatalogEntry> database;
   GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
     .Scan(GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
@@ -147,7 +153,6 @@ void ClusterCatalog::OpenCatalogLog(
   }
   _compactable = compactable;
   _live_bytes = GetAttached().GetStorageManager().GetWALSize();
-  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -168,12 +173,6 @@ void ClusterCatalog::BeginCatalogLogCommit() {
 }
 
 void ClusterCatalog::EndCatalogLogCommit() {
-  const auto version = duckdb::DuckTransactionManager::Get(GetAttached())
-                         .GetLastCommittedCatalogVersion();
-  if (_generation_version.exchange(version, std::memory_order_acq_rel) !=
-      version) {
-    _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
-  }
   _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 }
 
@@ -207,18 +206,47 @@ void ClusterCatalog::CompactCatalogLog() {
   auto& fs = duckdb::FileSystem::Get(GetAttached());
   const auto path = _catalog_log->GetPath();
   const auto rewrite_path = path + ".rewrite";
+  std::vector<std::pair<duckdb::Identifier, duckdb::idx_t>> databases;
+  GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) {
+      databases.emplace_back(entry.name, entry.oid);
+    });
+  auto& manager = duckdb::DatabaseManager::Get(GetDatabase());
+  std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> attached;
+  for (const auto& [name, oid] : databases) {
+    auto db = manager.GetDatabase(name);
+    if (!db || db->oid != oid) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("catalog log rewrite: database ", name.GetIdentifierName(),
+                " (", oid, ") is committed but not attached"));
+    }
+    attached.push_back(std::move(db));
+  }
+  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> checkpoint_locks;
+  auto lock_checkpoints = [&](duckdb::AttachedDatabase& db) {
+    auto lock = db.GetTransactionManager()
+                  .Cast<duckdb::DuckTransactionManager>()
+                  .TryGetIdleCheckpointLock();
+    if (!lock) {
+      return false;
+    }
+    checkpoint_locks.push_back(std::move(lock));
+    return true;
+  };
+  if (!lock_checkpoints(GetAttached()) ||
+      !absl::c_all_of(attached,
+                      [&](const auto& db) { return lock_checkpoints(*db); })) {
+    return;
+  }
   fs.TryRemoveFile(rewrite_path);
   duckdb::idx_t size = 0;
   {
     duckdb::WriteAheadLog rewrite{storage, rewrite_path};
     duckdb::WriteCatalogEntries(rewrite, *this);
-    for (const auto& db :
-         duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-      auto& catalog = db->GetCatalog();
-      if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
-        duckdb::WriteCatalogEntries(rewrite,
-                                    catalog.Cast<duckdb::DuckCatalog>());
-      }
+    for (auto& db : attached) {
+      duckdb::WriteCatalogEntries(rewrite,
+                                  db->GetCatalog().Cast<duckdb::DuckCatalog>());
     }
     {
       const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
