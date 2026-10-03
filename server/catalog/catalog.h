@@ -170,9 +170,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
                          duckdb::DropInfo& info);
 
  private:
-  void SyncReindexJob(duckdb::CatalogTransaction transaction,
-                      const duckdb::QualifiedName& name);
-
   std::atomic_bool _detached{false};
 };
 

@@ -249,8 +249,6 @@ class Loader {
         *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
         database, database_id, nullptr, 0, nullptr)} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
