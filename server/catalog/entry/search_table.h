@@ -147,6 +147,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
 
   void OnDrop() final;
+  void OnAlter() final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 

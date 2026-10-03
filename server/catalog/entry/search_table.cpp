@@ -625,14 +625,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterOptions(
   auto result = duckdb::make_uniq<SearchTableEntry>(
     catalog, ParentSchema(context), *bound,
     catalog.GetCatalogTransaction(context), _storage);
-  if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-    connection->DeferToCommit([storage = _storage, options = result->_options] {
-      storage->ApplyOptions(options);
-    });
-  } else {
-    _storage->ApplyOptions(result->_options);
-  }
   return result;
+}
+
+void SearchTableEntry::OnAlter() {
+  if (_storage) {
+    _storage->ApplyOptions(_options);
+  }
 }
 
 }  // namespace sdb::catalog

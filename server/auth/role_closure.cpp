@@ -143,8 +143,9 @@ std::shared_ptr<const RoleGraph> CommittedRoles(
   if (auto roles = cluster.CachedRoles(generation)) {
     return roles;
   }
-  auto roles = BuildRoleGraph(cluster, cluster.LoginTransaction());
-  cluster.CacheRoles(generation, roles);
+  auto [login, version] = cluster.LoginSnapshot();
+  auto roles = BuildRoleGraph(cluster, login);
+  cluster.CacheRoles(version, roles);
   return roles;
 }
 

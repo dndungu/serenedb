@@ -231,6 +231,7 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 
   void OnDrop() final;
+  void OnAlter() final;
 
   bool ScanColumnSegmentInfo(
     const duckdb::QueryContext& context,

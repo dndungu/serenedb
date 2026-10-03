@@ -266,11 +266,6 @@ void SereneDBClientState::TransactionPreCommit(
   tls_committing_ctx = _connection_ctx.get();
 }
 
-void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
-                                                 duckdb::ClientContext&) {
-  _connection_ctx->RefreshBeforeWalWrite(db.oid);
-}
-
 void SereneDBClientState::TransactionPreCheckpoint(
   duckdb::AttachedDatabase& db, duckdb::ClientContext&,
   duckdb::idx_t wal_generation, duckdb::idx_t wal_end_offset) {
@@ -286,6 +281,7 @@ void SereneDBClientState::TransactionPreCheckpoint(
     wal_generation,
     wal_end_offset > 0 ? wal_end_offset : db.GetStorageManager().GetWALSize()};
   _connection_ctx->CommitSearch(cursor, db.oid);
+  _connection_ctx->RefreshAtCommit(db.oid);
 }
 
 void SereneDBClientState::TransactionPreRollback(

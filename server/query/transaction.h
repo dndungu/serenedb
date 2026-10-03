@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-
 #include <functional>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -93,16 +91,11 @@ class Transaction : public Config {
 
   void Rollback();
 
-  void RefreshBeforeWalWrite(
-    duckdb::idx_t database,
-    std::shared_ptr<search::InvertedIndexStorage> storage) {
-    _refresh_before_wal_write.emplace_back(database, std::move(storage));
+  void RefreshAtCommit(duckdb::idx_t database,
+                       std::shared_ptr<search::InvertedIndexStorage> storage) {
+    _refresh_at_commit.emplace_back(database, std::move(storage));
   }
-  void RefreshBeforeWalWrite(duckdb::idx_t database);
-
-  void DeferToCommit(absl::AnyInvocable<void()> action) {
-    _on_commit.push_back(std::move(action));
-  }
+  void RefreshAtCommit(duckdb::idx_t database);
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -200,10 +193,9 @@ class Transaction : public Config {
   // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
   // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
-  std::vector<absl::AnyInvocable<void()>> _on_commit;
   std::vector<
     std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
-    _refresh_before_wal_write;
+    _refresh_at_commit;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

@@ -480,18 +480,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
     default:
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
-  if (_storage) {
-    auto settings = ResolveSettings(new_options);
-    if (auto* connection = connector::GetSereneDBContextPtr(context)) {
-      connection->DeferToCommit(
-        [storage = _storage, settings = std::move(settings)] {
-          storage->ApplyOptions(settings);
-        });
-    } else {
-      _storage->ApplyOptions(settings);
-    }
-  }
   return result;
+}
+
+void InvertedIndexEntry::OnAlter() {
+  if (_storage) {
+    _storage->ApplyOptions(ResolveSettings(options));
+  }
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(

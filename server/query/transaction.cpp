@@ -262,9 +262,6 @@ void Transaction::CommitSearch(std::optional<search::WalCursor> cursor,
 }
 
 void Transaction::Commit() {
-  for (auto& action : _on_commit) {
-    action();
-  }
   // Search-table segments commit on the database WAL tick; register their flush
   // up-front -- before any commit point -- so a concurrent background
   // RefreshCommit waits for them. They commit in the WAL block below.
@@ -314,8 +311,8 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
-void Transaction::RefreshBeforeWalWrite(duckdb::idx_t database) {
-  for (auto& [owner, storage] : _refresh_before_wal_write) {
+void Transaction::RefreshAtCommit(duckdb::idx_t database) {
+  for (auto& [owner, storage] : _refresh_at_commit) {
     if (owner == database) {
       storage->Refresh();
     }
@@ -324,10 +321,9 @@ void Transaction::RefreshBeforeWalWrite(duckdb::idx_t database) {
 
 void Transaction::Destroy() noexcept {
   _search_transactions.clear();
-  _refresh_before_wal_write.clear();
+  _refresh_at_commit.clear();
   _search_snapshots.clear();
   _search_txn.reset();
-  _on_commit.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;

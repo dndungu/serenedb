@@ -663,7 +663,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
   if (IsDuckDBTable()) {
-    GetSereneDBContext(context).RefreshBeforeWalWrite(
+    GetSereneDBContext(context).RefreshAtCommit(
       _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);
   }
 

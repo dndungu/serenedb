@@ -100,8 +100,6 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) final;
 
-  void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
-                              duckdb::ClientContext& context) final;
   void TransactionPreCheckpoint(duckdb::AttachedDatabase& db,
                                 duckdb::ClientContext& context,
                                 duckdb::idx_t wal_generation,
