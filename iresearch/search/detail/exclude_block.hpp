@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <bit>
 #include <cstdint>
 
 #include "iresearch/types.hpp"
@@ -50,8 +51,8 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
     return len;
   }
   uint32_t i = 0;
-  while (docs[i] < next) {
-    ++i;
+  for (auto step = std::bit_floor(len); step != 0; step >>= 1) {
+    i += (i + step <= len && docs[i + step - 1] < next) ? step : 0;
   }
   uint32_t kept = i;
   for (; i != len; ++i) {
